@@ -1,0 +1,33 @@
+[Unit]
+Description=Meshtastic Bridge - LoRa to HTTP agent gateway
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=meshtastic
+Group=dialout
+WorkingDirectory=/opt/meshtastic-bridge
+ExecStart=/opt/meshtastic-bridge/venv/bin/python -m bridge.main
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=meshtastic-bridge
+
+# Secrets (agent API key). Root-owned, mode 0600; systemd reads it as root and
+# passes the variables to the service.
+EnvironmentFile=/etc/meshtastic-bridge/.env
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/meshtastic-bridge
+PrivateTmp=true
+
+# Config file location
+Environment=MESHTASTIC_BRIDGE_CONFIG=/etc/meshtastic-bridge/config.yaml
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+meshtastic>=2.7.0
+pycryptodome>=3.20.0
+pyserial>=3.5
+aiohttp>=3.9.0
+pyyaml>=6.0
+pypubsub>=4.0.3

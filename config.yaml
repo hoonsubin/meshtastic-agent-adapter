@@ -1,0 +1,71 @@
+# Meshtastic Bridge Configuration
+#
+# THIS FILE IS THE SINGLE SOURCE OF TRUTH. Deploy it to the bridge host at
+# /etc/meshtastic-bridge/config.yaml (deploy/install.sh does this).
+#
+# The agent API key is deliberately NOT here: agent.api_key_env names the
+# environment variable that holds it, installed in
+# /etc/meshtastic-bridge/.env (root-owned, mode 0600) and read by the
+# systemd unit via EnvironmentFile.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 921600
+
+meshtastic:
+  # How the node is reached: a name registered in bridge/transport.py (TRANSPORTS)
+  connection: serial
+  hop_limit: 3
+  # LoRa text budget in bytes for replies and agent-initiated sends
+  max_message_length: 200
+  # Ask the mesh for a delivery ACK on unicast replies. A missing ACK is logged
+  # as a WARNING: it is the signature of a handset that never received the
+  # message (deaf receiver or lost packet), which is otherwise invisible.
+  want_ack: true
+  ack_timeout: 8.0
+  # Answer ONLY messages addressed to this bridge's node. Channel broadcasts are
+  # ignored, so the agent never sees traffic that everyone holding the channel
+  # PSK can read: direct messages are PKI-encrypted to the recipient.
+  direct_messages_only: true
+  # Node ids allowed to drive the agent (direct messages only).
+  # Empty list = any node that can DM this bridge gets an agent turn (logged loudly
+  # at startup). Add ids as they appear in the "Dropped ... not in allowed_nodes"
+  # log line.
+  allowed_nodes:
+    - "!68916e4c"   # Hoon Portable Mesh (THINKNODE_M1)
+
+agent:
+  # Hermes API server, OpenAI-compatible chat completions.
+  # The host/port come from ${AGENT_HOST} / ${AGENT_PORT} in .env so the
+  # same config.yaml works on every host. See .env.example for the full
+  # list of overridable variables.
+  url: http://${AGENT_HOST}:${AGENT_PORT}/v1/chat/completions
+  model: ${AGENT_MODEL:-hermes-agent}
+  # Environment variable holding the Bearer key (see .env)
+  api_key_env: MESHTASTIC_AGENT_KEY
+  # A full agent turn can take a while and the handset simply waits
+  timeout: 60
+  # One retry on transient failures, then stay silent on the mesh
+  max_retries: 1
+  # Per-node agent session, sent as X-Hermes-Session-Id (conversation continuity)
+  session_prefix: meshtastic
+  # A reply that overshoots the byte budget gets one rewrite request first: an
+  # extra API call costs tokens, not the shared radio airtime.
+  shorten_retry: true
+  system_prompt: |
+    You are answering a message that arrived over a LoRa mesh radio link.
+    Reply in plain text only: no markdown, no code blocks, no lists and no emoji.
+    Keep the whole reply under {max_bytes} bytes. If the full answer does not fit,
+    give the short answer and point to where the rest lives (for example a URL),
+    instead of trimming a long answer. Answer directly, with no preamble.
+    The message came from mesh node {from_id}.
+  # Substrings that mark automated traffic (position shares and friends) which
+  # must not cost an agent turn and a LoRa reply. Case-insensitive.
+  ignore_patterns:
+    - "📍"
+    - "has shared their position"
+
+bridge:
+  host: 0.0.0.0
+  http_port: 8085
+  log_level: INFO
