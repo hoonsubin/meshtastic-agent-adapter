@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install the Meshtastic Bridge on a DietPi/Debian Radxa node.
+# Install the Meshtastic Bridge on a DietPi/Debian node.
 #
 # Usage:
 #   sudo MESHTASTIC_AGENT_KEY=<key> bash deploy/install.sh   # first install
@@ -24,15 +24,14 @@ CONFIG_FILE="$CONFIG_DIR/config.yaml"
 ENV_FILE="$CONFIG_DIR/.env"
 SERVICE_USER="meshtastic"
 SERVICE_NAME="meshtastic-bridge"
-KEY_VAR="MESHTASTIC_AGENT_KEY"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Reusable env-file handling. The library is also sourced by tests/install/.
-# shellcheck source=lib/env_capture.sh
-source "$SCRIPT_DIR/lib/env_capture.sh"
-BRIDGE_ENV_FILE="$ENV_FILE"
-BRIDGE_ENV_EXAMPLE="$REPO_DIR/.env.example"
+# Env-file handling and ${VAR} expansion live in bridge/environment.py
+# (stdlib-only, so the system python3 runs it before the bridge venv exists).
+env_tool() {
+    python3 "$REPO_DIR/bridge/environment.py" "$@"
+}
 
 echo "=== Meshtastic Bridge Installer ==="
 
@@ -125,20 +124,9 @@ fi
 # preserve any value the operator already set in $ENV_FILE.
 echo "[5/8] Env file (.env, mode 0600)..."
 umask 077
-bridge_env_seed
-bridge_env_capture_from_shell
-
-if [[ -n "${!KEY_VAR:-}" ]]; then
-    bridge_env_append_key "${!KEY_VAR}"
-    echo "  Wrote key from \$$KEY_VAR to $ENV_FILE"
-elif [[ -s "$ENV_FILE" ]] && grep -q "^${KEY_VAR}=" "$ENV_FILE"; then
-    echo "  Existing key in $ENV_FILE preserved"
-else
-    printf '\n# Agent API key for the Hermes API server (Bearer token).\n# %s=<paste-key-here>\n' \
-        "$KEY_VAR" >> "$ENV_FILE"
-    echo "  WARNING: \$$KEY_VAR was not provided. Placeholder written to $ENV_FILE."
-    echo "           Set the key, then: sudo systemctl restart $SERVICE_NAME"
-fi
+env_tool seed --file "$ENV_FILE" --template "$REPO_DIR/.env.example"
+env_tool capture --file "$ENV_FILE"
+env_tool set-key --file "$ENV_FILE"
 chown root:root "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
@@ -149,25 +137,9 @@ cp "$REPO_DIR/deploy/meshtastic-bridge.service" /etc/systemd/system/
 systemctl daemon-reload
 
 # Read the deployed config values: the wait loop and the verification both need them.
-# Apply the same ${VAR} substitution as bridge.config.Config.load so the
-# post-install checks see the resolved URL, not the raw placeholder.
-expand_env() {
-    python3 -c '
-import os, re, sys
-text = sys.stdin.read()
-def sub(m):
-    name, default = m.group("name"), m.group("default")
-    value = os.environ.get(name)
-    if value is None and default is not None:
-        return default
-    if value is None:
-        return m.group(0)
-    return value
-sys.stdout.write(re.sub(r"\$\{(?P<name>[A-Z][A-Z0-9_]*)(?::-(?P<default>[^{}]*))?\}", sub, text))
-'
-}
-
-AGENT_URL=$(expand_env < "$CONFIG_FILE" | "$INSTALL_DIR/venv/bin/python" -c '
+# env_tool expand applies the same ${VAR} substitution as bridge.config.Config.load,
+# so the post-install checks see the resolved URL, not the raw placeholder.
+AGENT_URL=$(env_tool expand < "$CONFIG_FILE" | "$INSTALL_DIR/venv/bin/python" -c '
 import sys, yaml
 try:
     data = yaml.safe_load(sys.stdin) or {}
@@ -176,7 +148,7 @@ except Exception:
     print("")
 ')
 
-HTTP_PORT=$(expand_env < "$CONFIG_FILE" | "$INSTALL_DIR/venv/bin/python" -c '
+HTTP_PORT=$(env_tool expand < "$CONFIG_FILE" | "$INSTALL_DIR/venv/bin/python" -c '
 import sys, yaml
 try:
     data = yaml.safe_load(sys.stdin) or {}

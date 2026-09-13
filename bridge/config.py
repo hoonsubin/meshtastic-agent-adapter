@@ -18,13 +18,13 @@ in agent.system_prompt.
 
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
 
+from .environment import expand_env_vars
 from .transport import TRANSPORTS
 
 logger = logging.getLogger(__name__)
@@ -32,42 +32,9 @@ logger = logging.getLogger(__name__)
 # Config file the systemd unit points at, if any
 CONFIG_ENV_VAR = "MESHTASTIC_BRIDGE_CONFIG"
 
-# Matches ${UPPER_SNAKE_CASE} placeholders in YAML strings, with optional
-# ${VAR:-default} form (shell-style: use `default` when VAR is unset or empty).
-# The name has to start with an uppercase letter and contain only A-Z, 0-9 and
-# underscore, which keeps it away from the Python .format() placeholders in
-# agent.system_prompt ({max_bytes}, {from_id}) and from any incidental braces
-# in human-written strings.
-_ENV_VAR_PATTERN = re.compile(
-    r"\$\{(?P<name>[A-Z][A-Z0-9_]*)(?::-(?P<default>[^{}]*))?\}"
-)
-
-
-def expand_env_vars(text: str) -> str:
-    """
-    Replace ${VAR_NAME} (or ${VAR_NAME:-default}) with the env value.
-
-    - Unset variable, no default: left as the literal `${VAR_NAME}` so a typo
-      or missing env file fails loudly later instead of silently becoming "".
-    - Unset variable, with default: substituted with the default.
-    - Set variable (including empty string), with default: substituted with
-      the empty value (matches shell `:-` semantics — set-but-empty is a real
-      value, not an unset state).
-    """
-    if not text:
-        return text
-
-    def _sub(m: "re.Match[str]") -> str:
-        name = m.group("name")
-        default = m.group("default")
-        value = os.environ.get(name)
-        if value is None and default is not None:
-            return default
-        if value is None:
-            return m.group(0)
-        return value
-
-    return _ENV_VAR_PATTERN.sub(_sub, text)
+# ${VAR} / ${VAR:-default} expansion is defined in bridge.environment (stdlib-only)
+# so deploy/install.sh can reuse it without importing this module's yaml dependency.
+# ``expand_env_vars`` is imported above and re-exported here for existing callers.
 
 
 def expand_env_vars_in_obj(obj: Any) -> Any:
