@@ -56,13 +56,25 @@ message is an isolated turn.
 
 ## Verify before touching the bridge
 
+From the Hermes host (sanity check the API server itself, no agent involvement):
+
 ```
-terminal(command="KEY=$(grep '^API_SERVER_KEY=' ~/.hermes/.env | cut -d= -f2-); curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8642/v1/models; curl -s -H \"Authorization: Bearer $KEY\" http://127.0.0.1:8642/v1/models")
+terminal(command="ss -tlnp | grep 8642")
+terminal(command="curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8642/v1/models")
+terminal(command="KEY=$(grep '^API_SERVER_KEY=' ~/.hermes/.env | cut -d= -f2-); curl -s -o /dev/null -w '%{http_code}\\n' -H \"Authorization: Bearer ***\" http://127.0.0.1:8642/v1/models")
 ```
 
-`401` without the key and `200` with it is the healthy pair. From the radio host,
-`curl -s http://<hermes-host>:8642/health` must answer `200` for the bridge to
-work at all.
+`401` without the key and `200` with it is the healthy pair.
+
+From the **radio host**, confirm the bridge can actually reach the agent
+(this is the single most common failure mode — wrong `AGENT_HOST`, firewalled
+port, Hermes bound to localhost):
+
+```
+terminal(command="curl -sv --max-time 5 http://<hermes-host>:8642/health 2>&1 | grep -E 'Connected|HTTP/|Try connecting'")
+```
+
+The bridge cannot start serving until `/health` answers 200 from the radio host.
 
 ## Security (do not skip)
 
@@ -77,6 +89,27 @@ common case) that is an unsandboxed shell.
   `~/.hermes/.env` and every bridge's env file.
 - The bridge's own HTTP API (`/send`, `/callback`, port 8085) is unauthenticated
   by design; treat it the same way and keep it off untrusted networks.
+
+## Rotating the API key
+
+The order matters: if you update the bridge before the Hermes side, every
+agent call gets `401` for the gap. The right order is:
+
+1. On the **Hermes host**: replace `API_SERVER_KEY` in `~/.hermes/.env` with
+   the new value, then `hermes gateway restart`. Confirm the
+   `[Api_Server] API server listening on http://0.0.0.0:8642` line in
+   `journalctl --user -u hermes-gateway --since '-1min'`.
+2. On **each bridge host**: replace `MESHTASTIC_AGENT_KEY` in
+   `/etc/meshtastic-bridge/.env` with the same new value, then
+   `sudo systemctl restart meshtastic-bridge`. Wait ~10s (DTR/RTS reboot)
+   before judging `/health`.
+3. Run `bash scripts/verify_bridge.sh <radio-host>:8085` against each bridge.
+   `agent_reachable: true` plus a 200 from `/v1/models` on the Hermes side
+   means the rotation is complete.
+
+There is no in-band rotation handshake; the bridge reads `MESHTASTIC_AGENT_KEY`
+from its env file at every request, so step 2 above is sufficient — the service
+does not need to be reinstalled.
 
 ## Related knobs
 

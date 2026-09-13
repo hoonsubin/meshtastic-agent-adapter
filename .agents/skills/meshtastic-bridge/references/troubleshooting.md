@@ -4,6 +4,22 @@ Goal: decide in minutes whether a broken LoRa agent link is software or radio,
 and collect the evidence that settles it. Work top to bottom; each step either
 clears a layer or names the culprit.
 
+## 0. Installer exit codes (read this first if `install.sh` failed)
+
+The installer fails fast with a numbered error and a single-line hint. Read the
+last few lines of stderr; the fix is almost always in the message.
+
+| Message | Cause | Fix |
+|---|---|---|
+| `Run as root (sudo bash deploy/install.sh)` | not root | re-run with `sudo` |
+| `Serial port /dev/ttyUSB0 not found` | node unplugged, or wrong `serial.port` | check `lsusb` (CP210x / CH9102 / RAK4631 expected) and `ls /dev/ttyUSB* /dev/ttyACM*`; fix `serial.port` in `config.yaml` if your node is on `ttyACM0` |
+| `python3 not found` | no Python 3 | `apt-get install python3` |
+| `Python 3.10+ required, found N.N` | too old | newer distro, or `pyenv install 3.10` |
+| `systemd not found` | not a systemd host | use the command-mode install (Path A in README), or pick a host with systemd |
+| `service is not active. Recent log lines:` | bridge died on first start | read the journal lines that follow; usually `MESHTASTIC_AGENT_KEY` missing |
+| `bridge HTTP API did not answer on port N within 30s` | serial handshake slow, or first-run firmware flash | re-run after 30s; check `journalctl -u meshtastic-bridge -n 20` |
+| `agent /health did not return 200` | wrong `agent.url`, firewall, or Hermes API off | fix `AGENT_HOST` / `AGENT_PORT` in `/etc/meshtastic-bridge/.env`; verify `curl http://$AGENT_HOST:$AGENT_PORT/health` from the radio host |
+
 ## 1. Read the one endpoint that sees everything
 
 ```
@@ -112,7 +128,10 @@ terminal(command="ssh <user>@<radio-host> 'sudo journalctl -u meshtastic-bridge 
   is attached to (the connect sequence pulses DTR/RTS), and so does any CLI
   wrapper that pulses. `uptimeSeconds` therefore resets on every restart and is
   useless as a crash indicator. Do not pulse a board that answers serial by
-  itself, and allow ~10s after a reset before judging a send.
+  itself, and allow ~10s after a reset before judging a send. After
+  `systemctl restart meshtastic-bridge`, wait ~10s before reading `/health` or
+  running `scripts/verify_bridge.sh`; otherwise you'll see `serial: false`
+  transiently while the radio reboots.
 - **A reboot is not a fix for a deaf receiver unless it is a power cycle.**
   A firmware reset via USB re-initialises the app; only a real power cycle clears
   some front-end states. When diagnosing, ask for the power cycle explicitly.

@@ -18,6 +18,11 @@ through the bridge HTTP API. This skill covers deploying that bridge on a radio
 host and pointing it at a Hermes instance, plus verifying it and diagnosing the
 failures that look like software but are not.
 
+> **If you are a human operator following written instructions**, read
+> `<repo>/docs/SETUP.md` first. It walks through the same Path A / Path B
+> choice with the values table inline; this skill is the copy-pasteable
+> variant with explicit "Done when" checks.
+
 ## When to Use
 
 - The user wants Hermes reachable over Meshtastic/LoRa, or wants mesh messages to
@@ -33,31 +38,46 @@ On the radio host (Linux with systemd, the Meshtastic node on USB serial):
 
 - A Meshtastic node reachable as `/dev/ttyUSB0` (CP210x) or `/dev/ttyACM0`
   (native USB), listed in config as `serial.port`
-- Python 3.10+, `curl`, and root for the installer
+- Python 3.10+, `curl`, `lsusb`, and root for the installer
 - The node on the same channel (name AND PSK) as the handsets that will talk to
   the agent. Two nodes with the same channel name but different PSK never talk.
+- The bridge's HTTP API (port 8085) kept off untrusted networks — it is
+  unauthenticated by design (see `references/hermes-api-server.md`)
 
 On the Hermes host (can be a different machine on the same LAN):
 
 - API server enabled: `API_SERVER_KEY` (a strong key) and `API_SERVER_HOST`
   (see `references/hermes-api-server.md`)
-- The bridge reaches it at `http://<hermes-host>:8642/v1/chat/completions`
+- The bridge reaches it at `http://<hermes-host>:8642/v1/chat/completions`,
+  and port 8642 is reachable from the radio host
 
-Secrets: the agent API key lives in an env file on the radio host, never in
-`config.yaml`. `agent.api_key_env` names the variable.
+Secrets: the agent API key lives in `/etc/meshtastic-bridge/.env` on the radio
+host, never in `config.yaml`. `agent.api_key_env` names the variable.
 
 Handsets must send *direct messages to the bridge's node* (not channel broadcasts)
 and their node ids must be listed in `meshtastic.allowed_nodes`. That is the
 default posture: channel traffic is readable by every node holding the channel PSK,
 while direct messages are PKI-encrypted to the recipient.
 
+The bridge inherits the node's radio settings (region, modem preset, channel,
+PSK). It does not configure the radio itself — that is the
+`meshtastic-node-ops` skill's job.
+
 ## How to Run
 
-Install it as a command on the radio host (Python 3.10+), then run it:
+Install it as a command on the radio host (Python 3.10+), then run it from
+the repo root (the loader looks for `config.yaml` in the current directory):
 
 ```
 terminal(command="cd <repo> && python3 -m venv .venv && .venv/bin/pip install -e .")
 terminal(command="cd <repo> && MESHTASTIC_AGENT_KEY=<api-server-key> AGENT_HOST=<host> AGENT_PORT=8642 .venv/bin/meshtastic-bridge")
+```
+
+When running from a directory that does not contain `config.yaml`, point the
+loader at the deployed config explicitly:
+
+```
+terminal(command="MESHTASTIC_BRIDGE_CONFIG=/etc/meshtastic-bridge/config.yaml .venv/bin/meshtastic-bridge")
 ```
 
 Debian hosts can use the installer plus systemd instead
@@ -87,32 +107,75 @@ terminal(command="bash scripts/verify_bridge.sh <radio-host>:8085")    # health,
 
 ## Procedure
 
-1. Confirm the radio host really has the hardware: the serial device exists and
-   nothing else holds it (`fuser /dev/ttyUSB0`). Installing on a host without the
-   node wastes a revert cycle.
-   Done when `ls -l <serial.port>` shows the device.
-2. Read `<repo>/docs/SETUP.md` and deploy: either `pip install -e .` plus the
-   `meshtastic-bridge` command, or the Debian installer which writes
-   `/opt/meshtastic-bridge`, the config, the mode-0600 env file and the unit, then
-   polls `/health` for up to 30s.
-   Done when `systemctl is-active meshtastic-bridge` says active and `is-enabled`
-   says enabled.
-3. Point `agent.url` at the Hermes instance (repo `config.yaml` is the single
-   source of truth) and copy that config to `/etc/meshtastic-bridge/config.yaml`
-   before running the installer, which never overwrites an existing config.
-   Done when `curl -s <agent-base>/health` answers 200 from the radio host.
-4. Verify the health payload reports `serial: true`, `agent_reachable: true` and
-   a small `last_inbound_seconds`. A null or ever-growing
-   `last_inbound_seconds` with `serial: true` means the radio hears nothing.
-   Done when all three fields look right.
-5. Prove the loop with a real radio: send a message from a handset or from a
-   second node on the same channel and watch the bridge log
-   `Received from <node>` then `Agent replied` then `Sent message`.
-   Done when the sender receives the answer.
-6. Register the skill on the Hermes instance (optional, for other machines):
-   `terminal(command="hermes skills trust <path-to-this-repo>")`, or copy
-   `.hermes/skills/meshtastic-bridge` into `~/.hermes/skills/iot/` for a global
-   install.
+0. **Verify the radio hardware before installing.** Confirm the kernel sees the
+   node and the right driver is bound:
+   ```
+   terminal(command="lsusb | grep -E 'CP210x|CH9102|QinHeng Electronics|RaK'")
+   terminal(command="ls -la /dev/ttyUSB* /dev/ttyACM* 2>/dev/null")
+   terminal(command="fuser /dev/ttyUSB0 2>/dev/null && echo 'WARN: another process holds the port' || echo 'port free'")
+   ```
+   Done when `lsusb` shows one of the canonical IDs and `/dev/ttyUSB0` (or
+   `ttyACM0`) is listed. If nothing is listed, check the data cable
+   (charge-only cables look fine but never enumerate) and the driver — see
+   the Meshtastic docs at
+   `getting-started/serial-drivers/test-serial-driver-installation.mdx`.
+
+1. **Verify the node's channel and PSK match the handsets.** The bridge
+   inherits whatever the node is configured with; if the channel name or PSK
+   differs from the handsets, no radio link exists. Use the
+   `meshtastic-node-ops` skill to inspect and set these values; this skill
+   only verifies they are non-empty:
+   ```
+   terminal(command="meshtastic --port /dev/ttyUSB0 --info 2>&1 | grep -iE 'region|modem|channels|primary'")
+   ```
+   Done when `region` is set (e.g. `EU_868`, not `UNSET`), the modem preset is
+   visible (default `LONG_FAST`), and the primary channel has the expected
+   `name` and `psk` (compare against the handsets). `UNSET` region or an
+   empty channel means the node will not transmit — the bridge then reports
+   `serial: true` but `Received from` lines never appear.
+
+2. **Verify the Hermes API server is reachable from the radio host.** This is
+   the single most common deployment failure: wrong `AGENT_HOST`, port 8642
+   firewalled, or Hermes bound to localhost:
+   ```
+   terminal(command="curl -sv --max-time 5 http://<hermes-host>:8642/health 2>&1 | grep -E 'Connected|HTTP/|Try connecting'")
+   ```
+   Done when `HTTP/1.1 200` appears in the output.
+
+3. **Read `<repo>/docs/SETUP.md` and deploy.** Either `pip install -e .` plus
+   the `meshtastic-bridge` command, or the Debian installer which writes
+   `/opt/meshtastic-bridge`, the config, the mode-0600 env file and the unit,
+   then polls `/health` for up to 30 s.
+   Done when `systemctl is-active meshtastic-bridge` says active and
+   `is-enabled` says enabled.
+
+4. **Wait ~10 s, then read `/health`.** The bridge's connect sequence pulses
+   DTR/RTS and reboots the attached ESP32 node; reading `/health` immediately
+   after a restart catches the radio mid-reboot and reports `serial: false`
+   transiently. Then confirm `agent_reachable: true`:
+   ```
+   terminal(command="sleep 10 && curl -s http://127.0.0.1:8085/health | python3 -m json.tool")
+   ```
+   Done when `serial: true`, `agent_reachable: true` and
+   `last_inbound_seconds` is a small number (or `null` with no other handsets
+   around yet).
+
+5. **Prove the loop with a real radio.** Send a direct message from a handset
+   or a second node on the same channel and watch the bridge log
+   `Received from <node>` then `Agent replied` then `Sent message`. With
+   `meshtastic.want_ack: true` a healthy send logs nothing after `Sent message`
+   (the ACK came in); `No routing ACK from <node> within Ns` means the
+   handset never confirmed — go to `references/troubleshooting.md` step 2.
+   Done when the sender receives the answer and `last_inbound_seconds` is
+   refreshed.
+
+6. **Register the skill on the Hermes instance** (optional, for other
+   machines):
+   ```
+   terminal(command="hermes skills trust <path-to-this-repo>")
+   ```
+   or copy `.agents/skills/meshtastic-bridge` into `~/.hermes/skills/iot/` for
+   a global install.
    Done when `hermes skills list` shows `meshtastic-bridge`.
 
 ## Pitfalls

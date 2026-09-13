@@ -3,6 +3,13 @@
 A guided setup for the bridge. Read this top to bottom on a fresh host, then
 follow Path A (run as a command) or Path B (installer + systemd).
 
+> **If you are an autonomous agent** (Hermes / Miki / Claude / etc.), prefer
+> the agent skill shipped alongside this doc at
+> `.agents/skills/meshtastic-bridge/SKILL.md`. It has the same procedure
+> but in copy-pasteable form with explicit "Done when" checks at each step,
+> and links into the troubleshooting flow at
+> `.agents/skills/meshtastic-bridge/references/troubleshooting.md`.
+
 Two hosts can be involved and only two values change between them:
 
 - **radio host** — the machine the Meshtastic node is attached to. Today that
