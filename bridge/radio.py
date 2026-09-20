@@ -202,20 +202,30 @@ class MeshtasticRadio:
 
             # Per-packet signal diagnostics at DEBUG level: flip bridge.log_level
             # to DEBUG to see the mesh signal quality in journalctl. The values
-            # come from the meshtastic packet envelope - rssi is dBm (negative,
-            # closer to 0 = louder), snr is dB above the noise floor. Both may be
-            # None on local serial-loopback echoes; the guard below keeps the
+            # come from the meshtastic packet envelope - rxRssi is dBm (negative,
+            # closer to 0 = louder), rxSnr is dB above the noise floor. Both may
+            # be None on local serial-loopback echoes; the guard below keeps the
             # DEBUG log informative on real mesh traffic and quiet on noise.
+            #
+            # Field names are camelCase (rxRssi/rxSnr) in the meshtastic library
+            # since 2.x; fromId can be None for some packet types (e.g. our own
+            # echo when an admin cmd triggers a local response), in which case we
+            # fall back to the numeric ``from`` field.
             if logger.isEnabledFor(logging.DEBUG):
-                rssi = packet.get("rssi")
-                snr = packet.get("snr")
+                rssi = packet.get("rxRssi")
+                snr = packet.get("rxSnr")
                 if rssi is not None or snr is not None:
                     portnum = decoded.get("portnum", "?")
+                    from_id = packet.get("fromId") or (
+                        f"!{packet.get('from'):08x}"
+                        if isinstance(packet.get("from"), int)
+                        else None
+                    )
                     logger.debug(
                         "rx rssi=%s snr=%s from=%s to=%s portnum=%s",
                         rssi,
                         snr,
-                        packet.get("fromId"),
+                        from_id,
                         packet.get("toId"),
                         portnum,
                     )
