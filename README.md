@@ -116,6 +116,41 @@ found" until the bridge is stopped. Use `scripts/mesh_sniffer.py` (passive,
 no connection) or stop the bridge briefly if you need CLI access. Tracked in
 `meshtastic/python` issues #972, #777.
 
+## Debugging
+
+### Per-packet RSSI / SNR in the journal
+
+For mesh signal-quality work (is the node hearing the rest of the mesh?
+are unicast ACKs missing because of a deaf receiver?), flip
+`bridge.log_level: DEBUG` in `config.yaml` and restart the service.
+Every received packet then logs one line:
+
+```
+rx rssi=-58 snr=8.5 from=!fefe20f0 to=!ffffffff portnum=NEIGHBORINFO_APP
+rx rssi=-92 snr=-4.25 from=!68916e4c to=!fefe20f0 portnum=TEXT_MESSAGE_APP
+```
+
+- `rssi` is dBm (negative, closer to 0 = louder); -120 is the floor of
+  typical LoRa receiver sensitivity, anything above -100 is comfortable.
+- `snr` is dB above the noise floor; positive is healthy, anything below
+  -5 is starting to lose margin.
+
+Turn it back to `INFO` once you're done - at DEBUG the journal fills up
+at ~1 pkt/s with the device-telemetry broadcasts.
+
+### Other quick checks
+
+```bash
+# Inbound packet rate + agent reachability (the bridge health endpoint)
+curl -s http://<radio-host>:8085/health | jq
+
+# Last 50 lines from the bridge (errors + reconnects show up here)
+sudo journalctl -u meshtastic-bridge -n 50 --no-pager
+
+# Passive mesh sniffer: no BLE connection, just LoRa radio listen
+sudo scripts/mesh_sniffer.py
+```
+
 ## For everything else
 
 - **Full setup walkthrough** (preconditions, both topologies, the values
