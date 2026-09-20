@@ -12,8 +12,21 @@ serial:
   port: /dev/ttyUSB0
   baud: 921600
 
+ble:
+  # Settings for the BLE transport. Used when meshtastic.connection is 'ble'
+  # (ThinkNode M6, Heltec /w BLE, etc.). The serial block above is ignored then.
+  #
+  # The node must be paired+trusted at the OS level before the bridge runs:
+  #   bluetoothctl pair <addr>      # prompted for the fixed PIN/passkey (123456
+  #                                  #   by default for FIXED_PIN mode)
+  #   bluetoothctl trust <addr>     # auto-reconnect after the bridge exits
+  # address is the MAC (uppercase, colon-separated) of the meshtastic node.
+  address: ""
+
 meshtastic:
-  # How the node is reached: a name registered in bridge/transport.py (TRANSPORTS)
+  # How the node is reached: a name registered in bridge/transport.py (TRANSPORTS).
+  # - 'serial' for a USB-CDC/CP210x node (/dev/ttyUSB0, the original use case)
+  # - 'ble' for a Bluetooth Low Energy node (ThinkNode M6, Heltec /w BLE, ...)
   connection: serial
   hop_limit: 3
   # LoRa text budget in bytes for replies and agent-initiated sends

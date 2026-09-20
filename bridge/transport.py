@@ -108,8 +108,67 @@ class SerialTransport(Transport):
         interface.close()
 
 
+class BLETransport(Transport):
+    """
+    BLE node: connects to a meshtastic node over Bluetooth Low Energy.
+
+    Meshtastic firmware (NimBLE) advertises the meshtastic NUS service
+    (6ba1b218-15a8-461f-9fa8-5dcae273eafd) only while no central is connected;
+    the bridge holds the connection for its lifetime, so the node only advertises
+    between bridge restarts (and during a brief scan window at startup).
+
+    Pairing and trust happen at the OS level (bluez) once, before the bridge runs:
+
+        bluetoothctl pair <addr>      # prompted for the fixed PIN/passkey
+        bluetoothctl trust <addr>     # auto-reconnect after the bridge exits
+
+    The meshtastic BLE interface always scans to find the device on connect, so
+    the node must be advertising when the bridge starts - disconnect any prior
+    BLE consumer (the CLI, a phone app) first. After the bridge is up, it holds
+    the only BLE connection the node supports.
+
+    The service user must be in the ``bluetooth`` group (deploy/install.sh does
+    this) so the underlying bluez DBus calls are allowed.
+    """
+
+    name = "ble"
+
+    def __init__(self, address: str):
+        self.address = address
+
+    @classmethod
+    def from_config(cls, config) -> "BLETransport":
+        address = getattr(config.ble, "address", "") or ""
+        if not address:
+            raise ValueError(
+                "ble.address must be set when meshtastic.connection is 'ble'"
+            )
+        return cls(address=address)
+
+    def describe(self) -> str:
+        return f"BLE {self.address}"
+
+    def prerequisites_met(self) -> Tuple[bool, str]:
+        if not os.path.exists("/sys/class/bluetooth/hci0"):
+            return False, "no Bluetooth adapter found at /sys/class/bluetooth/hci0"
+        return True, f"Bluetooth adapter present, target BLE address {self.address}"
+
+    def open(self) -> Any:
+        from meshtastic.ble_interface import BLEInterface
+
+        # BLEInterface.__init__ -> connect() -> find_device() -> scan() runs a
+        # 10 s bleak discover() that only sees advertising devices. The bridge
+        # process holds the BLE slot for its lifetime, so subsequent reconnects
+        # inside one bridge run never scan (the call below is the only one).
+        return BLEInterface(address=self.address)
+
+    def close(self, interface: Any) -> None:
+        interface.close()
+
+
 TRANSPORTS: Dict[str, type] = {
     SerialTransport.name: SerialTransport,
+    BLETransport.name: BLETransport,
 }
 
 

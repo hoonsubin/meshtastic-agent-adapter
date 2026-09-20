@@ -108,6 +108,15 @@ class SerialConfig:
 
 
 @dataclass
+class BLEConfig:
+    """Settings for the BLE transport (ThinkNode M6 / Heltec / etc.)."""
+    # MAC address of the meshtastic node (uppercase, colon-separated).
+    # The node must already be paired+trusted at the OS level via bluetoothctl;
+    # the transport does not pair on its own (see bridge/transport.py).
+    address: str = ""
+
+
+@dataclass
 class MeshtasticConfig:
     # Registered in bridge.transport.TRANSPORTS: how the node is reached
     connection: str = "serial"
@@ -169,6 +178,7 @@ class BridgeConfig:
 @dataclass
 class Config:
     serial: SerialConfig = field(default_factory=SerialConfig)
+    ble: BLEConfig = field(default_factory=BLEConfig)
     meshtastic: MeshtasticConfig = field(default_factory=MeshtasticConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     bridge: BridgeConfig = field(default_factory=BridgeConfig)
@@ -218,6 +228,7 @@ class Config:
         """Build Config from dictionary."""
         return cls(
             serial=SerialConfig(**data.get("serial", {})),
+            ble=BLEConfig(**data.get("ble", {})),
             meshtastic=MeshtasticConfig(**data.get("meshtastic", {})),
             agent=AgentConfig(**data.get("agent", {})),
             bridge=BridgeConfig(**data.get("bridge", {})),
@@ -225,10 +236,14 @@ class Config:
 
     def validate(self) -> None:
         """Validate config values. Raises ValueError on anything unusable."""
-        if not self.serial.port:
-            raise ValueError("serial.port is required")
-        if self.serial.baud <= 0:
+        if self.meshtastic.connection == "serial" and not self.serial.port:
+            raise ValueError("serial.port is required when meshtastic.connection is 'serial'")
+        if self.meshtastic.connection == "serial" and self.serial.baud <= 0:
             raise ValueError("serial.baud must be positive")
+        if self.meshtastic.connection == "ble" and not self.ble.address:
+            raise ValueError(
+                "ble.address is required when meshtastic.connection is 'ble'"
+            )
         if self.meshtastic.connection not in TRANSPORTS:
             raise ValueError(
                 f"meshtastic.connection {self.meshtastic.connection!r} is not registered; "

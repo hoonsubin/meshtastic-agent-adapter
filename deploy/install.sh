@@ -44,13 +44,56 @@ fi
 # 0. Pre-flight hardware verification
 echo "[0/8] Pre-flight hardware verification..."
 
-if [[ ! -e /dev/ttyUSB0 ]]; then
-    echo "ERROR: Serial port /dev/ttyUSB0 not found"
-    echo "  - Is the Meshtastic node connected via USB?"
-    echo "  - Check with: ls -la /dev/ttyUSB*"
-    exit 1
-fi
-echo "  ✓ Serial port /dev/ttyUSB0 exists"
+# Read the connection type from the repo's config.yaml (or default to 'serial').
+# The deployed /etc/meshtastic-bridge/config.yaml wins if it already exists.
+CONFIG_FOR_PREFLIGHT="$CONFIG_FILE"
+[[ ! -f "$CONFIG_FOR_PREFLIGHT" ]] && CONFIG_FOR_PREFLIGHT="$REPO_DIR/config.yaml"
+CONNECTION_TYPE=$(grep -E '^[[:space:]]*connection:' "$CONFIG_FOR_PREFLIGHT" 2>/dev/null \
+    | head -1 | sed -E 's/^[[:space:]]*connection:[[:space:]]*//; s/[[:space:]]*#.*$//' \
+    | tr -d '"' | tr 'A-Z' 'a-z')
+CONNECTION_TYPE=${CONNECTION_TYPE:-serial}
+echo "  connection: $CONNECTION_TYPE"
+
+case "$CONNECTION_TYPE" in
+    serial)
+        if [[ ! -e /dev/ttyUSB0 ]]; then
+            echo "ERROR: Serial port /dev/ttyUSB0 not found"
+            echo "  - Is the Meshtastic node connected via USB?"
+            echo "  - Check with: ls -la /dev/ttyUSB*"
+            exit 1
+        fi
+        echo "  ✓ Serial port /dev/ttyUSB0 exists"
+        ;;
+    ble)
+        if [[ ! -e /sys/class/bluetooth/hci0 ]]; then
+            echo "ERROR: No Bluetooth adapter found at /sys/class/bluetooth/hci0"
+            echo "  - Check: ls -la /sys/class/bluetooth/"
+            echo "  - On Allwinner/AIC8800 hosts, the aic8800-bluetooth.service"
+            echo "    (and BT_WAKE pulse on /proc/bluetooth/sleep/btwrite) must be active"
+            exit 1
+        fi
+        echo "  ✓ Bluetooth adapter present"
+        # The node must be paired+trusted at the OS level before the bridge runs.
+        # We don't pair here on purpose: the operator needs to enter the device's
+        # FIXED_PIN (default 123456) once via an interactive bluetoothctl session.
+        BLE_ADDR=$(grep -E '^[[:space:]]*address:' "$CONFIG_FOR_PREFLIGHT" 2>/dev/null \
+            | head -1 | sed -E 's/^[[:space:]]*address:[[:space:]]*//' | tr -d '"' | tr 'A-Z' 'a-z')
+        if [[ -z "$BLE_ADDR" ]]; then
+            echo "ERROR: ble.address is empty in $CONFIG_FOR_PREFLIGHT"
+            echo "  - Set it to the MAC of the meshtastic node, e.g.:"
+            echo "      ble.address: D8:0B:FE:FE:20:F0"
+            exit 1
+        fi
+        echo "  target BLE address: $BLE_ADDR"
+        if ! command -v bluetoothctl >/dev/null && ! command -v hciattach >/dev/null; then
+            echo "ERROR: neither bluetoothctl nor hciattach found; install bluez"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "WARNING: unknown connection type '$CONNECTION_TYPE'; continuing"
+        ;;
+esac
 
 if ! command -v python3 &>/dev/null; then
     echo "ERROR: python3 not found"
@@ -85,7 +128,9 @@ echo "[2/8] Creating service user and log directory..."
 if ! id "$SERVICE_USER" &>/dev/null; then
     useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
 fi
-usermod -aG dialout "$SERVICE_USER"
+# dialout: serial nodes. bluetooth: BLE nodes (bluez group).
+# Both groups are always added: serial-only hosts ignore bluetooth and vice versa.
+usermod -aG dialout,bluetooth "$SERVICE_USER"
 
 mkdir -p /var/log/meshtastic-bridge
 chown "$SERVICE_USER:$SERVICE_USER" /var/log/meshtastic-bridge
