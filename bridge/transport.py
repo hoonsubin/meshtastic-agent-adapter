@@ -166,9 +166,60 @@ class BLETransport(Transport):
         interface.close()
 
 
+class TCPTransport(Transport):
+    """TCP node: connect over the node's TCP API (port 4403).
+
+    Used when the node is reached through a BLE→TCP bridge (a BLE-only node
+    exposed by a proxy) or a WiFi node. Unlike BLE (one client), a TCP server
+    accepts many clients, so the bridge and a management UI can share the same
+    node simultaneously.
+    """
+
+    name = "tcp"
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 4403):
+        self.host = host
+        self.port = port
+
+    @classmethod
+    def from_config(cls, config) -> "TCPTransport":
+        host = getattr(config.tcp, "host", "") or ""
+        port = getattr(config.tcp, "port", 4403)
+        if not host:
+            raise ValueError(
+                "tcp.host must be set when meshtastic.connection is 'tcp'"
+            )
+        return cls(host=host, port=port)
+
+    def describe(self) -> str:
+        return f"TCP {self.host}:{self.port}"
+
+    def prerequisites_met(self) -> Tuple[bool, str]:
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        try:
+            sock.connect((self.host, self.port))
+        except OSError as exc:
+            return False, f"cannot reach TCP {self.host}:{self.port} ({exc})"
+        finally:
+            sock.close()
+        return True, f"TCP {self.host}:{self.port} reachable"
+
+    def open(self) -> Any:
+        from meshtastic.tcp_interface import TCPInterface
+
+        return TCPInterface(hostname=self.host, portNumber=self.port)
+
+    def close(self, interface: Any) -> None:
+        interface.close()
+
+
 TRANSPORTS: Dict[str, type] = {
     SerialTransport.name: SerialTransport,
     BLETransport.name: BLETransport,
+    TCPTransport.name: TCPTransport,
 }
 
 
