@@ -260,11 +260,21 @@ class MeshtasticBridge:
         }
 
     async def run(self) -> None:
-        """Run until shutdown signal."""
+        """Run until shutdown, or exit when the radio link dies (systemd restart)."""
         await self.start()
 
-        # Wait for shutdown signal
-        await self._shutdown_event.wait()
+        # A dropped TCP/BLE connection kills the meshtastic reader thread with
+        # no exception surfacing here, which would leave the bridge a silent
+        # zombie. Poll the reader thread and exit non-zero so systemd's
+        # Restart=on-failure starts a fresh process (which reconnects).
+        while not self._shutdown_event.is_set():
+            if self.radio is not None and not self.radio.is_reader_alive():
+                logger.error(
+                    "Radio reader thread is dead (connection lost); "
+                    "exiting for systemd restart"
+                )
+                sys.exit(1)
+            await asyncio.sleep(5)
 
         await self.stop()
 

@@ -286,3 +286,16 @@ class MeshtasticRadio:
     def is_connected(self) -> bool:
         """Check if connected."""
         return self._connected and self._interface is not None
+
+    def is_reader_alive(self) -> bool:
+        """True while the meshtastic reader thread is still running.
+
+        A dropped TCP/BLE connection kills the reader thread without any
+        exception surfacing to the bridge, which would otherwise stay alive as
+        a silent zombie (``_connected`` still True, no packets arriving). The
+        main loop polls this to decide when to exit for a systemd restart.
+        """
+        if self._interface is None:
+            return False
+        thread = getattr(self._interface, "_rxThread", None)
+        return thread is not None and thread.is_alive()
