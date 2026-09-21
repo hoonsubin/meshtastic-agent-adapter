@@ -1238,9 +1238,9 @@ class TestTransports:
 
     def test_unknown_connection_lists_registered_transports(self, api_key_env):
         config = Config()
-        config.meshtastic.connection = "bluetooth"
+        config.meshtastic.connection = "ip-over-bluetooth"
 
-        with pytest.raises(ValueError, match="available: serial"):
+        with pytest.raises(ValueError, match="available: ble, serial"):
             config.validate()
 
     def test_prerequisites_report_missing_device(self):
@@ -1261,6 +1261,67 @@ class TestTransports:
 
         assert ok is True
         assert "present" in detail
+
+    def test_ble_is_registered(self):
+        from bridge.transport import BLETransport, TRANSPORTS
+
+        assert TRANSPORTS["ble"] is BLETransport
+
+    def test_build_transport_reads_the_ble_config(self):
+        from bridge.transport import BLETransport, build_transport
+
+        config = Config()
+        config.meshtastic.connection = "ble"
+        config.ble.address = "D8:0B:FE:FE:20:F0"
+
+        transport = build_transport(config)
+
+        assert isinstance(transport, BLETransport)
+        assert transport.address == "D8:0B:FE:FE:20:F0"
+        assert transport.describe() == "BLE D8:0B:FE:FE:20:F0"
+
+    def test_ble_from_config_requires_address(self):
+        from bridge.transport import BLETransport
+
+        config = Config()
+        config.meshtastic.connection = "ble"
+        config.ble.address = ""
+
+        with pytest.raises(ValueError, match="ble.address must be set"):
+            BLETransport.from_config(config)
+
+    def test_ble_prerequisites_fail_without_hci0(self, monkeypatch):
+        from bridge.transport import BLETransport
+
+        monkeypatch.setattr(
+            "bridge.transport.os.path.exists",
+            lambda p: False if p == "/sys/class/bluetooth/hci0" else True,
+        )
+
+        ok, detail = BLETransport(address="D8:0B:FE:FE:20:F0").prerequisites_met()
+
+        assert ok is False
+        assert "no Bluetooth adapter" in detail
+
+    def test_ble_prerequisites_pass_with_hci0(self, monkeypatch):
+        from bridge.transport import BLETransport
+
+        monkeypatch.setattr(
+            "bridge.transport.os.path.exists",
+            lambda p: True if p == "/sys/class/bluetooth/hci0" else True,
+        )
+
+        ok, detail = BLETransport(address="D8:0B:FE:FE:20:F0").prerequisites_met()
+
+        assert ok is True
+        assert "D8:0B:FE:FE:20:F0" in detail
+
+    def test_ble_connection_in_config_requires_address(self, api_key_env):
+        config = Config()
+        config.meshtastic.connection = "ble"
+
+        with pytest.raises(ValueError, match="ble.address is required"):
+            config.validate()
 
     def test_new_transport_is_a_class_plus_one_registry_entry(self, api_key_env):
         """Adding a connection method touches nothing outside this seam."""
@@ -1432,7 +1493,7 @@ class TestCheckCommand:
         out = capsys.readouterr().out
         assert code == 1
         assert "not registered" in out
-        assert "available: serial" in out
+        assert "available: ble, serial" in out
 
     def test_cli_check_uses_the_named_config_file(self, api_key_env, tmp_path, capsys):
         from bridge.main import cli

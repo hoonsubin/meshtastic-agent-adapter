@@ -64,6 +64,93 @@ sudo journalctl -u meshtastic-bridge -f
 `EnvironmentFile=` at `/etc/meshtastic-bridge/.env`, root-owned, mode 0600),
 never in `config.yaml`. The repo's `.env.example` is the template.
 
+## Connection methods
+
+The bridge is transport-agnostic: `bridge/transport.py` registers one class per
+connection method. `meshtastic.connection` in `config.yaml` picks one.
+
+### USB serial (the original use case)
+
+```yaml
+serial:
+  port: /dev/ttyUSB0
+  baud: 921600
+meshtastic:
+  connection: serial
+```
+
+The installer hard-requires `/dev/ttyUSB0` to exist on the host. Pairing is
+not a thing - the serial port is exclusive for the bridge's lifetime.
+
+### Bluetooth Low Energy (ThinkNode M6, Heltec /w BLE, ...)
+
+```yaml
+ble:
+  address: "D8:0B:FE:FE:20:F0"
+meshtastic:
+  connection: ble
+```
+
+The bridge holds the only BLE connection the node supports for its lifetime
+(NimBLE advertises only while no central is connected). Pairing and trust
+happen at the OS level (bluez) **once, before the bridge runs** - the
+transport does not pair on its own:
+
+```bash
+# Interactive, once per host. The node prompts for its fixed PIN/passkey;
+# the default is 123456 for FIXED_PIN pairing mode (see the Meshtastic
+# Bluetooth docs: https://meshtastic.org/docs/configuration/radio/bluetooth/).
+bluetoothctl pair D8:0B:FE:FE:20:F0
+bluetoothctl trust D8:0B:FE:FE:20:F0
+```
+
+The installer detects `connection: ble` and skips the `/dev/ttyUSB0` check,
+verifies `/sys/class/bluetooth/hci0` is present, and adds the
+`meshtastic` service user to the `bluetooth` group (alongside `dialout`)
+so bluez DBus calls are allowed.
+
+**Known upstream caveat** (the same one that affects `meshtastic --ble`):
+once the bridge holds the connection, the node stops advertising - so any
+later `meshtastic --ble <addr>` CLI calls will fail with "BLE device not
+found" until the bridge is stopped. Use `scripts/mesh_sniffer.py` (passive,
+no connection) or stop the bridge briefly if you need CLI access. Tracked in
+`meshtastic/python` issues #972, #777.
+
+## Debugging
+
+### Per-packet RSSI / SNR in the journal
+
+For mesh signal-quality work (is the node hearing the rest of the mesh?
+are unicast ACKs missing because of a deaf receiver?), flip
+`bridge.log_level: DEBUG` in `config.yaml` and restart the service.
+Every received packet then logs one line:
+
+```
+rx rssi=-58 snr=8.5 from=!fefe20f0 to=!ffffffff portnum=NEIGHBORINFO_APP
+rx rssi=-92 snr=-4.25 from=!68916e4c to=!fefe20f0 portnum=TEXT_MESSAGE_APP
+```
+
+- `rssi` is dBm (negative, closer to 0 = louder); -120 is the floor of
+  typical LoRa receiver sensitivity, anything above -100 is comfortable.
+- `snr` is dB above the noise floor; positive is healthy, anything below
+  -5 is starting to lose margin.
+
+Turn it back to `INFO` once you're done - at DEBUG the journal fills up
+at ~1 pkt/s with the device-telemetry broadcasts.
+
+### Other quick checks
+
+```bash
+# Inbound packet rate + agent reachability (the bridge health endpoint)
+curl -s http://<radio-host>:8085/health | jq
+
+# Last 50 lines from the bridge (errors + reconnects show up here)
+sudo journalctl -u meshtastic-bridge -n 50 --no-pager
+
+# Passive mesh sniffer: no BLE connection, just LoRa radio listen
+sudo scripts/mesh_sniffer.py
+```
+
 ## For everything else
 
 - **Full setup walkthrough** (preconditions, both topologies, the values

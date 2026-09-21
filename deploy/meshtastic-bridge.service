@@ -7,6 +7,10 @@ Wants=network-online.target
 Type=simple
 User=meshtastic
 Group=dialout
+# dialout for serial nodes; bluetooth for BLE nodes (bluez DBus policy).
+# The installer adds both groups to the meshtastic user; here we let systemd
+# assign them at service start so a fresh login isn't required.
+SupplementaryGroups=dialout bluetooth
 WorkingDirectory=/opt/meshtastic-bridge
 ExecStart=/opt/meshtastic-bridge/venv/bin/python -m bridge.main
 Restart=on-failure
