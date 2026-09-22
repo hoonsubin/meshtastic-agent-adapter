@@ -96,7 +96,7 @@ terminal(command="bash scripts/verify_bridge.sh <radio-host>:8085")    # health,
 | Purpose | Command |
 |---|---|
 | Health (bridge + agent + RX liveness) | `curl -s http://<radio-host>:8085/health` |
-| Agent-initiated send | `curl -s -X POST http://<radio-host>:8085/send -H 'Content-Type: application/json' -d '{"destination_id":"!68916e4c","message":"hi","channel":0}'` |
+| Agent-initiated send | `curl -s -X POST http://<radio-host>:8085/send -H 'Content-Type: application/json' -d '{"destination_id":"<recipient-node-id>","message":"hi","channel":0}'` |
 | Logs | `sudo journalctl -u meshtastic-bridge -f` |
 | Restart | `sudo systemctl restart meshtastic-bridge` |
 | Uninstall | `sudo bash deploy/revert.sh` |
